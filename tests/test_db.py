@@ -31,6 +31,25 @@ def test_verify_rejects_unhashed_or_missing_values():
     assert not db.verify_password("x", None)
 
 
+@pytest.mark.parametrize(
+    "stored",
+    [
+        "scrypt$",
+        "scrypt$1$2",
+        "scrypt$zz$8$1$ab$cd",
+        "scrypt$0$8$1$ab$cd",
+        "scrypt$3$8$1$ab$cd",
+        "scrypt$16384$8$1$xyz$cd",
+        "scrypt$16384$8$1$ab$xyz",
+        "scrypt$16$" + "2" * 30 + "$1$ab$cd",
+        "scrypt$-1$8$1$ab$cd",
+        b"scrypt$16384$8$1$ab$cd",
+    ],
+)
+def test_verify_rejects_broken_hashes(stored):
+    assert db.verify_password("pw", stored) is False
+
+
 def test_add_and_check_user(db_path):
     assert db.add_user("alice", "password1")
     assert not db.add_user("alice", "other-password")
@@ -242,3 +261,18 @@ def test_newer_database_is_refused(db_path):
         conn.execute(f"PRAGMA user_version = {len(db.MIGRATIONS) + 1}")
     with pytest.raises(RuntimeError, match="newer"):
         db.init_db()
+
+
+def test_migration_drops_requests_between_friends(tmp_path, monkeypatch):
+    path = tmp_path / "old.db"
+    monkeypatch.setattr(db, "DB_PATH", str(path))
+    with closing(sqlite3.connect(path)) as conn, conn:
+        conn.executescript("""
+            CREATE TABLE users (username TEXT PRIMARY KEY, password TEXT);
+            CREATE TABLE requests (sender TEXT, receiver TEXT, status TEXT);
+            INSERT INTO users VALUES ('alice', 'a'), ('bob', 'b');
+            INSERT INTO requests VALUES ('alice', 'bob', 'accepted'), ('bob', 'alice', 'pending');
+        """)
+    db.init_db()
+    assert db.get_friends("alice") == ["bob"]
+    assert db.get_requests("alice") == []

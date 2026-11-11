@@ -43,6 +43,7 @@ sessions = {}
 clients_lock = threading.Lock()
 connections = set()
 connections_lock = threading.Lock()
+chat_lock = threading.Lock()
 
 
 class ProtocolError(Exception):
@@ -293,11 +294,12 @@ def require_friend(conn, other):
 def handle_history(conn, message):
     other = username_field(message)
     require_friend(conn, other)
-    history = [
-        {"sender": sender, "receiver": receiver, "text": text, "timestamp": timestamp}
-        for sender, receiver, text, timestamp in db.get_chat_history(conn.username, other)
-    ]
-    conn.send("history", username=other, messages=history)
+    with chat_lock:
+        history = [
+            {"sender": sender, "receiver": receiver, "text": text, "timestamp": timestamp}
+            for sender, receiver, text, timestamp in db.get_chat_history(conn.username, other)
+        ]
+        conn.send("history", username=other, messages=history)
 
 
 def handle_message(conn, message):
@@ -308,11 +310,12 @@ def handle_message(conn, message):
     if len(text) > MAX_MESSAGE:
         raise BadRequest(f"Messages are at most {MAX_MESSAGE} characters.")
     require_friend(conn, receiver)
-    timestamp = db.add_message(conn.username, receiver, text)
-    fields = {"sender": conn.username, "receiver": receiver, "text": text, "timestamp": timestamp}
-    conn.send("message", **fields)
-    if receiver != conn.username:
-        send_to(receiver, "message", **fields)
+    with chat_lock:
+        timestamp = db.add_message(conn.username, receiver, text)
+        fields = {"sender": conn.username, "receiver": receiver, "text": text, "timestamp": timestamp}
+        conn.send("message", **fields)
+        if receiver != conn.username:
+            send_to(receiver, "message", **fields)
 
 
 def handle_pong(conn, message):

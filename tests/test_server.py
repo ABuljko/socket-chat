@@ -3,12 +3,14 @@ import json
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from contextlib import closing
 
 import pytest
 from conftest import REPO
 
+import chatroom_db as db
 import server as chat_server
 
 
@@ -397,3 +399,47 @@ def test_server_refuses_heartbeat_settings_that_cannot_work(args):
         [sys.executable, str(REPO / "server.py"), *args], capture_output=True, text=True, timeout=30
     )
     assert result.returncode == 2, result.stderr
+
+
+class RecordingConnection:
+    def __init__(self, username):
+        self.username = username
+        self.sent = []
+
+    def send(self, type_, /, **fields):
+        self.sent.append((type_, fields))
+
+
+def test_message_sent_while_history_loads_is_shown_once(db_path, monkeypatch):
+    with db.connect() as conn, conn:
+        conn.executemany("INSERT INTO users (username, password) VALUES (?, 'x')", [("alice",), ("bob",)])
+    db.add_request("alice", "bob")
+    db.add_request("bob", "alice")
+    alice, bob = RecordingConnection("alice"), RecordingConnection("bob")
+    monkeypatch.setattr(chat_server, "clients", {"alice": alice, "bob": bob})
+    stored, go_on = threading.Event(), threading.Event()
+    real_send_to = chat_server.send_to
+
+    def paused_send_to(*args, **fields):
+        stored.set()
+        go_on.wait(5)
+        real_send_to(*args, **fields)
+
+    monkeypatch.setattr(chat_server, "send_to", paused_send_to)
+    sender = threading.Thread(target=chat_server.handle_message, args=(alice, {"to": "bob", "text": "hi"}))
+    loader = threading.Thread(target=chat_server.handle_history, args=(bob, {"username": "alice"}))
+    sender.start()
+    assert stored.wait(5)
+    loader.start()
+    loader.join(0.5)
+    go_on.set()
+    sender.join(5)
+    loader.join(5)
+    assert not sender.is_alive() and not loader.is_alive()
+    shown = []
+    for type_, fields in bob.sent:
+        if type_ == "history":
+            shown = [item["text"] for item in fields["messages"]]
+        elif type_ == "message":
+            shown.append(fields["text"])
+    assert shown == ["hi"], bob.sent

@@ -72,6 +72,12 @@ MIGRATIONS = [
             AND sender IN (SELECT username FROM users)
             AND receiver IN (SELECT username FROM users)
         """,
+        """
+        DELETE FROM requests WHERE status <> 'accepted' AND EXISTS (
+            SELECT 1 FROM requests AS r
+            WHERE r.sender = requests.receiver AND r.receiver = requests.sender AND r.status = 'accepted'
+        )
+        """,
         "DROP TABLE old_users",
         "DROP TABLE old_messages",
         "DROP TABLE old_requests",
@@ -137,11 +143,14 @@ def hash_password(password):
 
 
 def verify_password(password, stored):
-    if not stored or not stored.startswith("scrypt$"):
+    if not isinstance(stored, str) or not stored.startswith("scrypt$"):
         return False
-    _, n, r, p, salt, digest = stored.split("$")
-    candidate = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt), n=int(n), r=int(r), p=int(p))
-    return hmac.compare_digest(candidate, bytes.fromhex(digest))
+    try:
+        _, n, r, p, salt, digest = stored.split("$")
+        candidate = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt), n=int(n), r=int(r), p=int(p))
+        return hmac.compare_digest(candidate, bytes.fromhex(digest))
+    except (ValueError, OverflowError, TypeError):
+        return False
 
 
 def add_user(username, password):
