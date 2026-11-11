@@ -261,3 +261,18 @@ def test_newer_database_is_refused(db_path):
         conn.execute(f"PRAGMA user_version = {len(db.MIGRATIONS) + 1}")
     with pytest.raises(RuntimeError, match="newer"):
         db.init_db()
+
+
+def test_migration_drops_requests_between_friends(tmp_path, monkeypatch):
+    path = tmp_path / "old.db"
+    monkeypatch.setattr(db, "DB_PATH", str(path))
+    with closing(sqlite3.connect(path)) as conn, conn:
+        conn.executescript("""
+            CREATE TABLE users (username TEXT PRIMARY KEY, password TEXT);
+            CREATE TABLE requests (sender TEXT, receiver TEXT, status TEXT);
+            INSERT INTO users VALUES ('alice', 'a'), ('bob', 'b');
+            INSERT INTO requests VALUES ('alice', 'bob', 'accepted'), ('bob', 'alice', 'pending');
+        """)
+    db.init_db()
+    assert db.get_friends("alice") == ["bob"]
+    assert db.get_requests("alice") == []

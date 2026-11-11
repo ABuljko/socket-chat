@@ -72,6 +72,12 @@ MIGRATIONS = [
             AND sender IN (SELECT username FROM users)
             AND receiver IN (SELECT username FROM users)
         """,
+        """
+        DELETE FROM requests WHERE status <> 'accepted' AND EXISTS (
+            SELECT 1 FROM requests AS r
+            WHERE r.sender = requests.receiver AND r.receiver = requests.sender AND r.status = 'accepted'
+        )
+        """,
         "DROP TABLE old_users",
         "DROP TABLE old_messages",
         "DROP TABLE old_requests",
