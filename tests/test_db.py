@@ -31,6 +31,25 @@ def test_verify_rejects_unhashed_or_missing_values():
     assert not db.verify_password("x", None)
 
 
+@pytest.mark.parametrize(
+    "stored",
+    [
+        "scrypt$",
+        "scrypt$1$2",
+        "scrypt$zz$8$1$ab$cd",
+        "scrypt$0$8$1$ab$cd",
+        "scrypt$3$8$1$ab$cd",
+        "scrypt$16384$8$1$xyz$cd",
+        "scrypt$16384$8$1$ab$xyz",
+        "scrypt$16$" + "2" * 30 + "$1$ab$cd",
+        "scrypt$-1$8$1$ab$cd",
+        b"scrypt$16384$8$1$ab$cd",
+    ],
+)
+def test_verify_rejects_broken_hashes(stored):
+    assert db.verify_password("pw", stored) is False
+
+
 def test_add_and_check_user(db_path):
     assert db.add_user("alice", "password1")
     assert not db.add_user("alice", "other-password")
